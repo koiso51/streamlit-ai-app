@@ -50,7 +50,12 @@ with st.sidebar:
         help="Anthropic API キーを入力してください（ANTHROPIC_API_KEY 環境変数でも設定可）",
     )
 
-    DEFAULT_FOLDER = r"C:\Users\oisok\OneDrive\Desktop\Fastlabel"
+    # Docker mount path takes priority; fall back to original Windows path
+    DOCKER_MOUNT = "/docs/fastlabel"
+    DEFAULT_FOLDER = (
+        DOCKER_MOUNT if os.path.exists(DOCKER_MOUNT)
+        else r"C:\Users\oisok\OneDrive\Desktop\Fastlabel"
+    )
     folder_path = st.text_input(
         "FASTLabel 資料フォルダパス",
         value=DEFAULT_FOLDER,
@@ -70,6 +75,15 @@ with st.sidebar:
         st.warning("対応ファイル（PDF / DOCX / PPTX / TXT）が見つかりません")
     else:
         st.info("フォルダパスを設定してください\n（資料なしでも提案書は生成できます）")
+
+    st.divider()
+    st.subheader("📤 資料をアップロード（任意）")
+    uploaded_files = st.file_uploader(
+        "フォルダが使えない場合はここからアップロード",
+        type=["pdf", "docx", "pptx", "txt"],
+        accept_multiple_files=True,
+        help="PDF / DOCX / PPTX / TXT に対応しています",
+    )
 
     st.divider()
     st.subheader("🎛️ 出力オプション")
@@ -131,6 +145,27 @@ if generate_btn:
         status.info("📚 FASTLabel 社内資料を読み込んでいます…")
         progress.progress(10, text="社内資料を読み込み中…")
         fastlabel_context = load_fastlabel_documents(folder_path)
+
+        # Also ingest any directly uploaded files
+        if uploaded_files:
+            import tempfile, pathlib
+            extra_parts: list[str] = []
+            for uf in uploaded_files:
+                suffix = pathlib.Path(uf.name).suffix
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    tmp.write(uf.read())
+                    tmp_path = pathlib.Path(tmp.name)
+                from utils.rag import _extract_text
+                text = _extract_text(tmp_path)
+                if text:
+                    extra_parts.append(f"=== {uf.name} ===\n{text.strip()}")
+                tmp_path.unlink(missing_ok=True)
+            if extra_parts:
+                fastlabel_context = (
+                    (fastlabel_context + "\n\n" if fastlabel_context else "")
+                    + "\n\n".join(extra_parts)
+                )
+
         if fastlabel_context:
             st.caption(f"✅ 資料読み込み完了（{len(fastlabel_context):,} 文字）")
 
