@@ -56,6 +56,24 @@ with st.sidebar:
     elif not api_key:
         st.info("💡 API キーが未入力です。https://console.anthropic.com/ で取得できます。")
 
+    if api_key and st.button("🔑 API キーを検証する", help="キーが正しく動作するか確認します"):
+        with st.spinner("検証中…"):
+            try:
+                import anthropic as _anthropic
+                _client = _anthropic.Anthropic(api_key=api_key)
+                _client.messages.create(
+                    model="claude-haiku-4-5",
+                    max_tokens=1,
+                    messages=[{"role": "user", "content": "hi"}],
+                )
+                st.success("✅ API キーは有効です！")
+            except Exception as _e:
+                _msg = str(_e)
+                if "401" in _msg or "authentication" in _msg:
+                    st.error("❌ API キーが無効です。console.anthropic.com で確認してください。")
+                else:
+                    st.error(f"❌ エラー: {_msg}")
+
     # Docker mount path takes priority; fall back to original Windows path
     DOCKER_MOUNT = "/docs/fastlabel"
     DEFAULT_FOLDER = (
