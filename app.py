@@ -301,7 +301,13 @@ if generate_btn:
                 "- コピー時にスペースが入っていないか確認してください"
             )
         elif "429" in err_str or "rate_limit" in err_str:
-            status.error("❌ **APIレート制限エラー（429）** — しばらく待ってから再試行してください。")
+            status.error("❌ **APIレート制限エラー（429）** — リクエストが多すぎます。1〜2分待ってから再試行してください。")
+        elif "529" in err_str or "overloaded" in err_str:
+            status.error(
+                "❌ **Anthropic サーバー混雑エラー（529）**\n\n"
+                "Anthropic のサーバーが一時的に混雑しています。お客様側の問題ではありません。\n"
+                "**3〜5分待ってから「🚀 提案書を生成する」を再度クリックしてください。**"
+            )
         else:
             status.error(f"❌ エラーが発生しました: {exc}")
         with st.expander("詳細エラー情報"):

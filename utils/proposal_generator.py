@@ -87,8 +87,8 @@ def generate_proposal(
     Returns a dict matching the schema in _OUTPUT_SCHEMA.
     Falls back to a skeleton dict if JSON parsing fails.
     """
-    # max_retries=5: SDK automatically retries 429/5xx with exponential backoff
-    client = anthropic.Anthropic(api_key=api_key, max_retries=5)
+    # max_retries=8: SDK automatically retries 429/529/5xx with exponential backoff
+    client = anthropic.Anthropic(api_key=api_key, max_retries=8)
 
     # Build FASTLabel context section
     fl_section = (

@@ -11,8 +11,8 @@ def search_company_info(company_name: str, api_key: str) -> str:
     Uses Claude's built-in ``web_search_20260209`` server-side tool, which runs
     entirely on Anthropic's infrastructure — no extra API key is required.
     """
-    # max_retries=5: SDK automatically retries 429/5xx with exponential backoff
-    client = anthropic.Anthropic(api_key=api_key, max_retries=5)
+    # max_retries=8: SDK automatically retries 429/529/5xx with exponential backoff
+    client = anthropic.Anthropic(api_key=api_key, max_retries=8)
 
     prompt = f"""「{company_name}」について、AIデータラベリングの提案書作成に必要な情報を収集してください。
 
