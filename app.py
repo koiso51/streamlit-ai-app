@@ -43,12 +43,18 @@ with st.sidebar:
 
     st.header("⚙️ 設定")
 
-    api_key = st.text_input(
+    _raw_key = st.text_input(
         "Anthropic API Key",
         value=os.environ.get("ANTHROPIC_API_KEY", ""),
         type="password",
         help="Anthropic API キーを入力してください（ANTHROPIC_API_KEY 環境変数でも設定可）",
     )
+    api_key = _raw_key.strip()  # 前後のスペース・改行を除去
+
+    if api_key and not api_key.startswith("sk-ant-"):
+        st.warning("⚠️ API キーは `sk-ant-` で始まる形式が正しいです。https://console.anthropic.com/ で確認してください。")
+    elif not api_key:
+        st.info("💡 API キーが未入力です。https://console.anthropic.com/ で取得できます。")
 
     # Docker mount path takes priority; fall back to original Windows path
     DOCKER_MOUNT = "/docs/fastlabel"
@@ -118,10 +124,16 @@ with col_info:
         """
     )
 
+_btn_disabled = not bool(company_name) or not bool(api_key)
+_btn_help = (
+    "企業名と Anthropic API Key の両方を入力してください"
+    if _btn_disabled else None
+)
 generate_btn = st.button(
     "🚀 提案書を生成する",
     type="primary",
-    disabled=not bool(company_name),
+    disabled=_btn_disabled,
+    help=_btn_help,
 )
 
 # ---------------------------------------------------------------------------
@@ -261,6 +273,18 @@ if generate_btn:
 
     except Exception as exc:
         progress.empty()
-        status.error(f"❌ エラーが発生しました: {exc}")
+        err_str = str(exc)
+        if "401" in err_str or "authentication_error" in err_str or "invalid x-api-key" in err_str:
+            status.error(
+                "❌ **APIキー認証エラー（401）**\n\n"
+                "サイドバーの「Anthropic API Key」欄を確認してください。\n"
+                "- キーは `sk-ant-` で始まります\n"
+                "- https://console.anthropic.com/ でキーを確認・再発行できます\n"
+                "- コピー時にスペースが入っていないか確認してください"
+            )
+        elif "429" in err_str or "rate_limit" in err_str:
+            status.error("❌ **APIレート制限エラー（429）** — しばらく待ってから再試行してください。")
+        else:
+            status.error(f"❌ エラーが発生しました: {exc}")
         with st.expander("詳細エラー情報"):
             st.exception(exc)
