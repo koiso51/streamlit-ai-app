@@ -11,7 +11,8 @@ def search_company_info(company_name: str, api_key: str) -> str:
     Uses Claude's built-in ``web_search_20260209`` server-side tool, which runs
     entirely on Anthropic's infrastructure — no extra API key is required.
     """
-    client = anthropic.Anthropic(api_key=api_key)
+    # max_retries=5: SDK automatically retries 429/5xx with exponential backoff
+    client = anthropic.Anthropic(api_key=api_key, max_retries=5)
 
     prompt = f"""「{company_name}」について、AIデータラベリングの提案書作成に必要な情報を収集してください。
 
@@ -33,7 +34,7 @@ def search_company_info(company_name: str, api_key: str) -> str:
     MAX_CONTINUATIONS = 5
     for _ in range(MAX_CONTINUATIONS):
         response = client.messages.create(
-            model="claude-opus-4-6",
+            model="claude-sonnet-4-6",  # lighter than opus; sufficient for web research
             max_tokens=4000,
             tools=[{"type": "web_search_20260209", "name": "web_search"}],
             messages=messages,
