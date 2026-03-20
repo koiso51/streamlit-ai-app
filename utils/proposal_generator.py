@@ -216,7 +216,7 @@ def _extract_fact_map(
 
     response = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=3000,
+        max_tokens=1500,
         system=(
             "あなたは企業のAI活用状況を分析する専門家です。"
             "与えられた情報から、データアノテーションが必要な具体的な事業領域とAIプロジェクトを"

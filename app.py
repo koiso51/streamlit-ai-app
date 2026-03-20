@@ -199,9 +199,9 @@ if generate_btn:
         if fastlabel_context:
             st.caption(f"✅ 資料読み込み完了（{len(fastlabel_context):,} 文字）")
 
-        # --- Step 2: Web search (2 queries: overview + AI/ML specifics) ---
-        status.info(f"🔍 {company_name} の企業概要を検索しています…")
-        progress.progress(20, text="Web 検索中（概要）…")
+        # --- Step 2: Web search (overview + AI/ML specifics in one call) ---
+        status.info(f"🔍 {company_name} の企業情報・AI活用状況を検索しています…")
+        progress.progress(20, text="Web 検索中…")
         company_info = search_company_info(company_name, api_key)
         progress.progress(40, text="Web 検索完了")
 

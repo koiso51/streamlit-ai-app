@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".txt", ".md"}
-MAX_CONTEXT_CHARS = 60_000  # keep well within Claude's context window
+MAX_CONTEXT_CHARS = 20_000  # key service info is front-loaded; limits Opus input tokens
 
 
 def load_fastlabel_documents(folder_path: str) -> str:
