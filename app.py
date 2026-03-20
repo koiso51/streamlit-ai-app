@@ -256,12 +256,17 @@ if generate_btn:
             if details:
                 with st.expander("提案内容 詳細を見る"):
                     for d in details:
-                        st.markdown(
-                            f"**{d.get('service_name', '')}**  \n"
-                            f"{d.get('value', '')}  \n"
-                            f"*差別化: {d.get('differentiator', '')}*  \n"
-                            f"期待効果: {d.get('expected_effect', '')}"
-                        )
+                        st.markdown(f"**{d.get('service_name', '')}**")
+                        if d.get("challenge_link"):
+                            st.caption(f"対象課題: {d['challenge_link']}")
+                        if d.get("implementation_scenario"):
+                            st.markdown(f"**実装シナリオ:** {d['implementation_scenario']}")
+                        if d.get("before_after"):
+                            st.markdown(f"**Before → After:** {d['before_after']}")
+                        if d.get("why_fastlabel_here"):
+                            st.markdown(f"**なぜFASTLabel？:** {d['why_fastlabel_here']}")
+                        if d.get("expected_effect"):
+                            st.info(f"期待効果: {d['expected_effect']}")
                         st.divider()
 
             roi = proposal.get("roi_estimate", "")

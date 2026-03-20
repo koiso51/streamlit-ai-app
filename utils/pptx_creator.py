@@ -297,39 +297,81 @@ def _slide_proposal_details(prs: Presentation, proposal: dict) -> None:
     if not details:
         return
 
-    slide = _blank_slide(prs)
-    _slide_header(slide, "提案内容　詳細")
-
-    row_h = Inches(1.65)
-    col_headers = ["提供サービス / 機能", "提供価値", "差別化ポイント", "期待効果"]
-    col_ws = [Inches(2.3), Inches(3.2), Inches(3.4), Inches(3.0)]
-    col_xs = [Inches(0.3)]
-    for w in col_ws[:-1]:
-        col_xs.append(col_xs[-1] + w + Inches(0.1))
-
-    header_y = Inches(1.5)
-    # Header row
-    for j, (label, w, x) in enumerate(zip(col_headers, col_ws, col_xs)):
-        _fill_rect(slide, x, header_y, w, Inches(0.45), _NAVY)
-        _add_text(slide, label, x, header_y, w, Inches(0.45),
-                  font_size=10, bold=True, color=_WHITE, align=PP_ALIGN.CENTER)
-
-    start_y = header_y + Inches(0.45)
     for i, d in enumerate(details[:3]):
-        y = start_y + i * row_h
-        bg = _LIGHT_GRAY if i % 2 == 0 else _WHITE
-        for j, (key, w, x) in enumerate(
-            zip(["service_name", "value", "differentiator", "expected_effect"],
-                col_ws, col_xs)
-        ):
-            _fill_rect(slide, x, y, w, row_h - Inches(0.05), bg)
-            # Left accent for first column
-            if j == 0:
-                _fill_rect(slide, x, y, Inches(0.05), row_h - Inches(0.05), _CYAN)
-            _add_text(slide, d.get(key, ""),
-                      x + Inches(0.1), y + Inches(0.1),
-                      w - Inches(0.15), row_h - Inches(0.2),
-                      font_size=11, color=_DARK_GRAY)
+        slide = _blank_slide(prs)
+        service = d.get("service_name", f"提案 {i + 1}")
+        _slide_header(slide, f"提案内容 {i + 1}｜{service}")
+
+        challenge_link = d.get("challenge_link", "")
+        impl = d.get("implementation_scenario", "")
+        before_after = d.get("before_after", "")
+        why = d.get("why_fastlabel_here", "")
+        effect = d.get("expected_effect", "")
+
+        # Challenge link badge (full-width, just below header)
+        if challenge_link:
+            _fill_rect(slide, Inches(0.4), Inches(1.45),
+                       Inches(12.5), Inches(0.35), RGBColor(0xE3, 0xEE, 0xFA))
+            _add_text(slide, f"対象課題：{challenge_link}",
+                      Inches(0.55), Inches(1.47), Inches(12.0), Inches(0.3),
+                      font_size=11, color=_NAVY)
+
+        # Two-column layout
+        left_x = Inches(0.4)
+        left_w = Inches(6.4)
+        right_x = Inches(7.0)
+        right_w = Inches(5.9)
+        top_y = Inches(1.9)
+        sec_h_top = Inches(1.3)
+        sec_h_bot = Inches(1.6)
+        bar_h = Inches(0.3)
+        gap = Inches(0.1)
+
+        # ── Left top: 実装シナリオ ──────────────────────────────────
+        _fill_rect(slide, left_x, top_y, left_w, bar_h, _BLUE)
+        _add_text(slide, "実装シナリオ", left_x, top_y, left_w, bar_h,
+                  font_size=10, bold=True, color=_WHITE, align=PP_ALIGN.CENTER)
+        _fill_rect(slide, left_x, top_y + bar_h, left_w, sec_h_top, _LIGHT_GRAY)
+        _add_text(slide, impl,
+                  left_x + Inches(0.1), top_y + bar_h + Inches(0.05),
+                  left_w - Inches(0.2), sec_h_top - Inches(0.1),
+                  font_size=11, color=_DARK_GRAY)
+
+        # ── Left bottom: Before → After ────────────────────────────
+        ba_y = top_y + bar_h + sec_h_top + gap
+        _fill_rect(slide, left_x, ba_y, left_w, bar_h, _NAVY)
+        _add_text(slide, "Before → After（導入効果）",
+                  left_x, ba_y, left_w, bar_h,
+                  font_size=10, bold=True, color=_WHITE, align=PP_ALIGN.CENTER)
+        _fill_rect(slide, left_x, ba_y + bar_h, left_w, sec_h_bot, _LIGHT_GRAY)
+        _add_text(slide, before_after,
+                  left_x + Inches(0.1), ba_y + bar_h + Inches(0.05),
+                  left_w - Inches(0.2), sec_h_bot - Inches(0.1),
+                  font_size=11, color=_DARK_GRAY)
+
+        # ── Right top: なぜFASTLabelか？ ───────────────────────────
+        _fill_rect(slide, right_x, top_y, right_w, bar_h, _CYAN)
+        _add_text(slide, "なぜFASTLabelか？",
+                  right_x, top_y, right_w, bar_h,
+                  font_size=10, bold=True, color=_NAVY, align=PP_ALIGN.CENTER)
+        _fill_rect(slide, right_x, top_y + bar_h, right_w, sec_h_top, _LIGHT_GRAY)
+        _add_text(slide, why,
+                  right_x + Inches(0.1), top_y + bar_h + Inches(0.05),
+                  right_w - Inches(0.2), sec_h_top - Inches(0.1),
+                  font_size=11, color=_DARK_GRAY)
+
+        # ── Right bottom: 期待効果（定量） ─────────────────────────
+        eff_y = top_y + bar_h + sec_h_top + gap
+        _fill_rect(slide, right_x, eff_y, right_w, bar_h, _ORANGE)
+        _add_text(slide, "期待効果（定量）",
+                  right_x, eff_y, right_w, bar_h,
+                  font_size=10, bold=True, color=_WHITE, align=PP_ALIGN.CENTER)
+        _fill_rect(slide, right_x, eff_y + bar_h, right_w, sec_h_bot,
+                   RGBColor(0xFF, 0xF3, 0xE0))
+        _add_text(slide, effect,
+                  right_x + Inches(0.1), eff_y + bar_h + Inches(0.05),
+                  right_w - Inches(0.2), sec_h_bot - Inches(0.1),
+                  font_size=12, bold=True, color=_DARK_GRAY)
 
 
 def _slide_roi(prs: Presentation, proposal: dict) -> None:
