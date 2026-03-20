@@ -199,13 +199,18 @@ if generate_btn:
         if fastlabel_context:
             st.caption(f"✅ 資料読み込み完了（{len(fastlabel_context):,} 文字）")
 
-        # --- Step 2: Web search ---
-        status.info(f"🔍 {company_name} の情報を Web 検索しています…（数十秒かかる場合があります）")
-        progress.progress(25, text="Web 検索中…")
+        # --- Step 2: Web search (2 queries: overview + AI/ML specifics) ---
+        status.info(f"🔍 {company_name} の企業概要を検索しています…")
+        progress.progress(20, text="Web 検索中（概要）…")
         company_info = search_company_info(company_name, api_key)
+        progress.progress(40, text="Web 検索完了")
 
-        # --- Step 3: Generate proposal ---
-        status.info("✍️ 提案書の内容を Claude で生成しています…（1〜2 分かかる場合があります）")
+        # --- Step 3a: Fact map extraction (Phase 1) ---
+        status.info(f"🗺️ AI/MLプロジェクト事実マップを構造化しています…")
+        progress.progress(50, text="事実マップを分析中…")
+
+        # --- Step 3b: Deep proposal generation (Phase 2) ---
+        status.info("✍️ 課題仮説・提案内容を深く検討しています…（1〜2 分かかる場合があります）")
         progress.progress(55, text="提案内容を生成中…")
         proposal = generate_proposal(
             company_name=company_name,

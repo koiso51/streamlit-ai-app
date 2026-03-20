@@ -1,4 +1,11 @@
-"""Proposal generator: uses Claude to create a structured proposal JSON."""
+"""Proposal generator: uses Claude to create a structured proposal JSON.
+
+Two-phase reasoning approach for deep challenge hypotheses:
+  Phase 1 (Sonnet) — Extract a structured fact map of the company's specific
+                     AI/ML projects, departments, and data activities.
+  Phase 2 (Opus)   — Reason from those concrete facts to evidence-based,
+                     business-specific challenge hypotheses and proposals.
+"""
 
 import json
 import re
@@ -27,16 +34,38 @@ FASTLabelはAI開発に必要な「教師データ（トレーニングデータ
 - 日本語UIと日本語サポート
 - AIアシストで競合比3〜5倍の作業効率
 - 導入から運用まで一貫したCSサポート
-- 多様なデータ形式への対応（業界最多水準）
-
-【提案書作成の原則】
-1. 課題仮説は「そのクライアントにとって本当に重要な経営課題・事業課題」であること（表面的な課題ではなく深層の課題）
-2. 提案内容は課題を「深いレベルで解決」できること（単なる機能説明ではなく課題解決ストーリー）
-3. FASTLabelならではの差別化要素を明確にすること
-4. 想定部門を具体的に特定し、そのステークホルダーの言語で語ること"""
+- 多様なデータ形式への対応（業界最多水準）"""
 
 # ---------------------------------------------------------------------------
-# Output schema description (few-shot style JSON)
+# Phase 1: Fact-map extraction prompt
+# ---------------------------------------------------------------------------
+
+_FACT_MAP_SCHEMA = """{
+  "business_areas": [
+    {
+      "name": "事業領域名（例: 自動運転開発、製造ライン検査、医療画像診断など）",
+      "department": "担当部門・組織名（具体的に）",
+      "ai_project": "AIプロジェクト・製品・サービス名（具体的に）",
+      "data_type": "必要なデータ種別（例: カメラ映像、CT画像、テキストログなど）",
+      "annotation_need": "アノテーション・ラベリングが必要な理由・用途",
+      "scale_hint": "規模感のヒント（求人数・投資額・対象拠点数など判明した情報）"
+    }
+  ],
+  "overall_ai_maturity": "AI活用成熟度の評価（黎明期/拡大期/高度化期）",
+  "key_bottleneck_area": "最もデータ課題が深刻と推測される事業領域（1つ）",
+  "evidence_summary": "上記の根拠となった情報源・事実のサマリー"
+}"""
+
+_FACT_MAP_INSTRUCTIONS = """以下の企業調査情報を分析し、AIデータラベリングの観点から重要な「事実マップ」を作成してください。
+
+【重要】情報が明示されていない場合は、業界知識と求人内容・IR・技術ブログから合理的に推論してください。
+推論の場合は「〜と推測される」と明記してください。
+
+以下のJSON形式のみで出力してください（マークダウンコードブロック不要）：
+"""
+
+# ---------------------------------------------------------------------------
+# Phase 2: Deep hypothesis generation prompt
 # ---------------------------------------------------------------------------
 
 _OUTPUT_SCHEMA = """{
@@ -44,22 +73,23 @@ _OUTPUT_SCHEMA = """{
   "target_persona": "キーパーソンの役職・ミッション（例: AIプロジェクトリーダー、CDO直下の推進担当など）",
   "company_overview": "企業・業界のAI活用状況サマリー（2-3文）",
   "challenges": [
-    "課題仮説1：深層の経営課題レベルで記述",
-    "課題仮説2：データ/AI開発プロセスの課題",
-    "課題仮説3：スピード・品質・コストのトレードオフ課題"
+    "【事業名】の【部門/工程】において、【具体的な課題】が発生しており、【ビジネスインパクト】が生じている可能性がある。（根拠: 〜）",
+    "【事業名】の【部門/工程】において、【具体的な課題】が発生しており、【ビジネスインパクト】が生じている可能性がある。（根拠: 〜）",
+    "【事業名】の【部門/工程】において、【具体的な課題】が発生しており、【ビジネスインパクト】が生じている可能性がある。（根拠: 〜）"
   ],
   "challenge_details": [
     {
-      "title": "課題タイトル（短く）",
-      "description": "課題の詳細（なぜ重要か、現状どうなっているか）",
-      "business_impact": "放置した場合のビジネスインパクト"
+      "title": "課題タイトル（事業名・部門名を含む短いタイトル）",
+      "description": "課題の詳細（どの事業のどの工程で、なぜ課題が発生しているか。具体的なプロセスや技術的背景を含む）",
+      "business_impact": "放置した場合のビジネスインパクト（競合比較・開発遅延・コスト増など定量的に）",
+      "evidence": "この課題仮説の根拠（求人内容・IR・業界トレンド・類似事例等）"
     }
   ],
   "proposal_summary": "提案の一言サマリー（エレベーターピッチ）",
   "proposal_details": [
     {
       "service_name": "FASTLabelの提供サービス/機能名",
-      "value": "提供価値（課題との接続を明確に）",
+      "value": "提供価値（上記の具体的な課題との接続を明確に）",
       "differentiator": "FASTLabelならではの差別化理由",
       "expected_effect": "期待効果（できれば数値）"
     }
@@ -72,6 +102,28 @@ _OUTPUT_SCHEMA = """{
   ]
 }"""
 
+_PROPOSAL_INSTRUCTIONS = """
+【課題仮説を作成する際の必須要件】
+以下の3層構造で各仮説を記述してください：
+
+  層1（事実層）: 「〇〇社の△△事業において、□□というAIプロジェクトに取り組んでいる」
+  層2（課題層）: 「そのプロジェクトの◇◇工程で、〜という理由により、××という課題が発生している」
+  層3（影響層）: 「その結果、▲▲というビジネスインパクトが生じており、競合比で〜の遅れが生じている可能性がある」
+
+【NG例（浅い仮説）】
+  ✗「教師データ作成コストが高い」
+  ✗「アノテーション品質にばらつきがある」
+
+【OK例（深い仮説）】
+  ✓「自動運転開発事業のセンサーフュージョン開発チームにおいて、カメラ・LiDARの融合データアノテーションを外注ベンダー複数社に分散発注しているため、ラベリング基準の解釈齟齬が生じ、モデル学習の再実行コストが増大している可能性がある。（根拠: AI関連求人でLiDAR/カメラの記載、複数ベンダー管理経験を求める記載あり）」
+
+以下のJSON形式のみで出力してください（マークダウンコードブロック不要）：
+"""
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 def generate_proposal(
     company_name: str,
@@ -82,91 +134,157 @@ def generate_proposal(
     include_roi: bool = True,
 ) -> dict:
     """
-    Call Claude to generate a structured proposal for *company_name*.
-
-    Returns a dict matching the schema in _OUTPUT_SCHEMA.
-    Falls back to a skeleton dict if JSON parsing fails.
+    Two-phase generation:
+      Phase 1 — Build a structured fact map of the company's AI activities (Sonnet, fast).
+      Phase 2 — Generate deep, evidence-based proposals from the fact map (Opus + thinking).
     """
-    # max_retries=8: SDK automatically retries 429/529/5xx with exponential backoff
     client = anthropic.Anthropic(api_key=api_key, max_retries=8)
 
-    # Build FASTLabel context section
+    raw_info = company_info or f"企業名: {company_name}（調査情報なし。業界知識から推定してください）"
+
+    # --- Phase 1: Extract structured fact map ---
+    fact_map = _extract_fact_map(client, company_name, raw_info)
+
+    # --- Phase 2: Generate deep proposal from facts ---
+    return _generate_deep_proposal(
+        client=client,
+        company_name=company_name,
+        raw_info=raw_info,
+        fact_map=fact_map,
+        fastlabel_context=fastlabel_context,
+        include_cases=include_cases,
+        include_roi=include_roi,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 implementation
+# ---------------------------------------------------------------------------
+
+def _extract_fact_map(
+    client: anthropic.Anthropic,
+    company_name: str,
+    company_info: str,
+) -> dict:
+    """
+    Use Sonnet to extract a structured map of the company's AI projects and
+    data activities. Returns a dict (falls back to empty dict on failure).
+    """
+    prompt = (
+        f"対象企業: {company_name}\n\n"
+        f"【企業調査情報】\n{company_info}\n\n"
+        f"{_FACT_MAP_INSTRUCTIONS}{_FACT_MAP_SCHEMA}"
+    )
+
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=3000,
+        system=(
+            "あなたは企業のAI活用状況を分析する専門家です。"
+            "与えられた情報から、データアノテーションが必要な具体的な事業領域とAIプロジェクトを"
+            "構造的に抽出・推論してください。"
+        ),
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = _extract_text(response)
+    try:
+        return _parse_json(raw)
+    except Exception:
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 implementation
+# ---------------------------------------------------------------------------
+
+def _generate_deep_proposal(
+    client: anthropic.Anthropic,
+    company_name: str,
+    raw_info: str,
+    fact_map: dict,
+    fastlabel_context: str,
+    include_cases: bool,
+    include_roi: bool,
+) -> dict:
+    """Use Opus with adaptive thinking to generate deep, specific proposals."""
     fl_section = (
         f"【FASTLabel社内資料（サービス詳細・事例）】\n{fastlabel_context}"
         if fastlabel_context
         else "【FASTLabel資料】資料が提供されていないため、サービス知識から提案を生成します。"
     )
 
-    # Conditional sections
-    roi_instruction = (
+    fact_map_text = (
+        json.dumps(fact_map, ensure_ascii=False, indent=2)
+        if fact_map
+        else "（事実マップの抽出に失敗しました。企業調査情報から直接推論してください）"
+    )
+
+    roi_req = (
         "- roi_estimate: 具体的な数値（工数削減率・期間・金額換算）を含む試算"
-        if include_roi
-        else "- roi_estimate: 定性的な効果説明（数値試算は不要）"
+        if include_roi else
+        "- roi_estimate: 定性的な効果説明（数値試算は不要）"
     )
-    case_instruction = (
+    case_req = (
         "- case_study: 類似業界・用途の具体的な導入事例"
-        if include_cases
-        else "- case_study: 空文字でよい"
+        if include_cases else
+        "- case_study: 空文字でよい"
     )
 
-    user_prompt = f"""以下の情報を元に、{company_name}様向けのFASTLabel提案書コンテンツを作成してください。
+    user_prompt = f"""以下の情報を元に、{company_name}様向けのFASTLabel提案書を作成してください。
 
-【クライアント企業調査情報】
-{company_info if company_info else f"企業名: {company_name}（検索情報なし。業界知識から推定してください）"}
+【企業調査情報（Web検索結果）】
+{raw_info}
+
+【AIプロジェクト事実マップ（Phase 1分析結果）】
+{fact_map_text}
 
 {fl_section}
 
 【出力要件】
-{roi_instruction}
-{case_instruction}
+{roi_req}
+{case_req}
 
-以下のJSON形式のみで出力してください（マークダウンコードブロック不要）：
-{_OUTPUT_SCHEMA}"""
+{_PROPOSAL_INSTRUCTIONS}{_OUTPUT_SCHEMA}"""
 
     response = client.messages.create(
         model="claude-opus-4-6",
-        max_tokens=5000,
+        max_tokens=6000,
         thinking={"type": "adaptive"},
         system=_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_prompt}],
     )
 
-    # Extract text content (skip thinking blocks)
-    text_parts: list[str] = []
-    for block in response.content:
-        if block.type == "text":
-            text_parts.append(block.text)
-
-    raw = "\n".join(text_parts).strip()
-
+    raw = _extract_text(response)
     return _parse_proposal_json(raw, company_name)
 
 
 # ---------------------------------------------------------------------------
-# JSON parsing helpers
+# Shared helpers
 # ---------------------------------------------------------------------------
 
-def _parse_proposal_json(raw: str, company_name: str) -> dict:
-    """Try to extract a JSON object from *raw*, returning a fallback on failure."""
-    # Strip markdown fences if present
+def _extract_text(response) -> str:
+    return "\n".join(
+        block.text for block in response.content if block.type == "text"
+    ).strip()
+
+
+def _parse_json(raw: str) -> dict:
     cleaned = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE).strip()
     cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+    m = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    if m:
+        return json.loads(m.group())
+    return json.loads(cleaned)
 
-    # Find the first { ... } block
-    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group())
-        except json.JSONDecodeError:
-            pass
 
-    # Last resort: try to parse the whole string
+def _parse_proposal_json(raw: str, company_name: str) -> dict:
+    """Try to parse JSON from raw text; return a fallback skeleton on failure."""
     try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
+        return _parse_json(raw)
+    except (json.JSONDecodeError, Exception):
         pass
 
-    # Fallback skeleton so the app never crashes
     return {
         "target_department": "AI推進本部・データサイエンス部門",
         "target_persona": "AIプロジェクトリーダー",
@@ -181,6 +299,7 @@ def _parse_proposal_json(raw: str, company_name: str) -> dict:
                 "title": "教師データ作成の非効率",
                 "description": "手作業によるラベリングは時間・コストがかかり、品質のばらつきも大きい",
                 "business_impact": "AI開発サイクルの長期化、競合他社へのスピード負け",
+                "evidence": "業界一般的な課題として設定（企業固有情報の取得に失敗）",
             }
         ],
         "proposal_summary": "FASTLabelで教師データ作成を自動化・高品質化し、AI開発を加速する",
