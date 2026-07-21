@@ -1,4 +1,10 @@
-"""Proposal generator: uses Claude to create a structured proposal JSON."""
+"""Proposal generator: uses Claude to create a structured proposal JSON.
+
+The proposal targets a prospective client's *executives* and is built to
+withstand a first-meeting discussion: challenge hypotheses must be grounded
+in facts gathered about that specific company (not generic boilerplate),
+and generative-AI approaches must map 1:1 onto those challenges.
+"""
 
 import json
 import re
@@ -6,125 +12,143 @@ import re
 import anthropic
 
 # ---------------------------------------------------------------------------
-# System prompt — FASTLabel sales consultant persona
+# System prompt — generic generative-AI strategy consultant persona
 # ---------------------------------------------------------------------------
 
-_SYSTEM_PROMPT = """あなたはFASTLabel株式会社のエンタープライズ営業コンサルタントです。
+_SYSTEM_PROMPT = """あなたは経営コンサルティングファームに所属する、生成AI活用戦略を専門とするシニアコンサルタントです。
 
-【FASTLabelについて】
-FASTLabelはAI開発に必要な「教師データ（トレーニングデータ）作成」を効率化するデータアノテーション・ラベリングプラットフォームです。
-
-【主要サービス・機能】
-- 高精度アノテーションツール（画像・動画・テキスト・音声・3D点群）
-- AIアシスト機能による半自動ラベリングで作業効率最大80%改善
-- 品質管理ワークフロー（レビュー・承認・QAプロセス）
-- プロジェクト管理・進捗可視化ダッシュボード
-- APIによるMLパイプライン連携
-- セキュアな国内データ処理環境
-
-【差別化ポイント】
-- 国産プラットフォームによる高いセキュリティ・コンプライアンス対応
-- 日本語UIと日本語サポート
-- AIアシストで競合比3〜5倍の作業効率
-- 導入から運用まで一貫したCSサポート
-- 多様なデータ形式への対応（業界最多水準）
+【あなたの立場】
+特定の自社製品・SaaSを売り込むのではなく、クライアント企業の事業内容・経営課題を深く理解した上で、その企業に最適な生成AI活用のアプローチと導入計画を設計し、コンサルティングとして伴走支援することを提案します。
 
 【提案書作成の原則】
-1. 課題仮説は「そのクライアントにとって本当に重要な経営課題・事業課題」であること（表面的な課題ではなく深層の課題）
-2. 提案内容は課題を「深いレベルで解決」できること（単なる機能説明ではなく課題解決ストーリー）
-3. FASTLabelならではの差別化要素を明確にすること
-4. 想定部門を具体的に特定し、そのステークホルダーの言語で語ること"""
+1. 「事実 → 示唆 → 提案」の順で思考すること。まず収集した事実（企業サイト・ニュース・IR情報など）を根拠として押さえ、そこから論理的に導かれる示唆（課題仮説）を立て、最後にその課題に対応する生成AI活用アプローチを提案する、という一貫したロジックを崩さないこと。
+2. 課題仮説は一般論ではなく、収集した事実に基づく、その企業・事業セグメント固有のものであること。「業務効率化」「DX推進」のような抽象的な言葉だけで終わらせず、具体的な業務プロセス名・部門名・想定指標まで踏み込むこと。
+3. 各課題仮説には、根拠となった具体的な事実（evidence）を明記すること。事実が乏しい場合でも、業界動向等の合理的な推測であることが分かる書き方にする。
+4. 提案する生成AIアプローチは、課題仮説と1対1で明確に対応させ、かつコンサルティングファームとして実際に提供可能な支援内容（現状診断、PoC設計・伴走、内製化支援、人材育成など）と結び付けること。
+5. 経営者が読んだときに「自社のことを事前に深く調べている」と感じられるよう、固有名詞（事業拠点・製品名・サービス名・直近のニュースなど）を積極的に本文に盛り込むこと。
+6. 出力は一般的な生成AI活用資料ではなく、初回の経営会議・役員ディスカッションで通用する品質であること。想定される反論・質問（コスト、セキュリティ、既存業務への影響など）にも備えること。"""
 
 # ---------------------------------------------------------------------------
 # Output schema description (few-shot style JSON)
 # ---------------------------------------------------------------------------
 
 _OUTPUT_SCHEMA = """{
-  "target_department": "想定部門・職種（例: AI推進本部、データサイエンスグループ、研究開発部門 など具体的に）",
-  "target_persona": "キーパーソンの役職・ミッション（例: AIプロジェクトリーダー、CDO直下の推進担当など）",
-  "company_overview": "企業・業界のAI活用状況サマリー（2-3文）",
-  "challenges": [
-    "課題仮説1：深層の経営課題レベルで記述",
-    "課題仮説2：データ/AI開発プロセスの課題",
-    "課題仮説3：スピード・品質・コストのトレードオフ課題"
-  ],
-  "challenge_details": [
+  "company_overview": {
+    "summary": "企業概要のサマリー（2-3文、事実ベース）",
+    "business_domain": "事業ドメイン・業界",
+    "scale": "分かる範囲での規模感（従業員数・売上規模・拠点数など）",
+    "recent_topics": "直近のニュース・IR・注力テーマなど（固有名詞を含める）"
+  },
+  "business_segments": [
     {
+      "name": "事業セグメント名",
+      "description": "その事業の概要（1-2文）"
+    }
+  ],
+  "challenges": [
+    {
+      "segment": "対応する事業セグメント名（business_segmentsのnameと一致させる）",
       "title": "課題タイトル（短く）",
-      "description": "課題の詳細（なぜ重要か、現状どうなっているか）",
+      "description": "課題の詳細。なぜ重要か、現状どうなっているか。抽象論ではなく具体的な業務・部門に踏み込むこと",
+      "evidence": "根拠となった収集事実（サイト記載内容・ニュース等、具体的に）",
       "business_impact": "放置した場合のビジネスインパクト"
     }
   ],
-  "proposal_summary": "提案の一言サマリー（エレベーターピッチ）",
-  "proposal_details": [
+  "ai_landscape_summary": "なぜ『今』『この企業』にとって生成AI活用が有効かの説明（2-3文）",
+  "approaches": [
     {
-      "service_name": "FASTLabelの提供サービス/機能名",
-      "value": "提供価値（課題との接続を明確に）",
-      "differentiator": "FASTLabelならではの差別化理由",
-      "expected_effect": "期待効果（できれば数値）"
+      "related_challenge": "対応するchallenges[].titleと一致させる",
+      "title": "生成AI活用アプローチ名",
+      "description": "具体的な取り組み内容・提供価値",
+      "consulting_support": "コンサルティングとして提供する支援内容（現状診断/PoC設計・伴走/内製化支援/人材育成など）",
+      "expected_effect": "期待効果（可能なら定量的に）"
     }
   ],
-  "roi_estimate": "ROI・期待効果の試算（工数削減率、期間、金額換算など具体的に）",
-  "case_study": "類似業界・用途の導入事例サマリー（なければ空文字）",
+  "roadmap_phases": [
+    {
+      "phase": "フェーズ名（例: Phase1 現状診断・課題特定）",
+      "duration": "想定期間（例: 1〜1.5ヶ月）",
+      "description": "このフェーズで行うこと",
+      "deliverables": "このフェーズの成果物・アウトプット"
+    }
+  ],
+  "roi_estimate": "投資規模感・ROI試算（工数削減率、期間、金額換算など具体的に）",
+  "case_study": "自社の類似支援実績サマリー（資料が提供されていれば具体的に、なければ空文字）",
+  "anticipated_qa": [
+    {
+      "question": "初回議論で経営者から出そうな質問（コスト・セキュリティ・既存業務への影響など）",
+      "answer": "回答の想定"
+    }
+  ],
   "next_steps": [
     "次のアクション1（具体的）",
     "次のアクション2"
-  ]
+  ],
+  "target_persona_notes": "経営者との議論で意識すべきポイント（関心領域・懸念点など、1-2文）"
 }"""
 
 
 def generate_proposal(
     company_name: str,
-    company_info: str,
-    fastlabel_context: str,
+    research_site_text: str,
+    research_web_summary: str,
+    reference_context: str,
     api_key: str,
-    include_cases: bool = True,
+    firm_name: str = "",
     include_roi: bool = True,
+    include_case_study: bool = True,
 ) -> dict:
     """
-    Call Claude to generate a structured proposal for *company_name*.
+    Call Claude to generate a structured, company-specific proposal for
+    *company_name*, grounded in the research gathered from their website
+    (*research_site_text*) and supplementary web search (*research_web_summary*).
 
     Returns a dict matching the schema in _OUTPUT_SCHEMA.
     Falls back to a skeleton dict if JSON parsing fails.
     """
     client = anthropic.Anthropic(api_key=api_key)
 
-    # Build FASTLabel context section
-    fl_section = (
-        f"【FASTLabel社内資料（サービス詳細・事例）】\n{fastlabel_context}"
-        if fastlabel_context
-        else "【FASTLabel資料】資料が提供されていないため、サービス知識から提案を生成します。"
+    reference_section = (
+        f"【自社の支援実績・サービス資料】\n{reference_context}"
+        if reference_context
+        else "【自社の支援実績・サービス資料】資料が提供されていないため、一般的なコンサルティング支援の知見から提案を生成します。"
     )
 
-    # Conditional sections
     roi_instruction = (
         "- roi_estimate: 具体的な数値（工数削減率・期間・金額換算）を含む試算"
         if include_roi
         else "- roi_estimate: 定性的な効果説明（数値試算は不要）"
     )
     case_instruction = (
-        "- case_study: 類似業界・用途の具体的な導入事例"
-        if include_cases
+        "- case_study: 自社資料に類似実績があれば具体的に、なければ業界一般的な成功パターンを簡潔に"
+        if include_case_study
         else "- case_study: 空文字でよい"
     )
 
-    user_prompt = f"""以下の情報を元に、{company_name}様向けのFASTLabel提案書コンテンツを作成してください。
+    firm_label = firm_name.strip() or "当コンサルティングファーム"
 
-【クライアント企業調査情報】
-{company_info if company_info else f"企業名: {company_name}（検索情報なし。業界知識から推定してください）"}
+    user_prompt = f"""以下の情報を元に、{company_name}様（経営者向け）の生成AI活用ご提案書コンテンツを作成してください。提案主体は「{firm_label}」です。
 
-{fl_section}
+【クライアント企業サイトからの収集情報】
+{research_site_text if research_site_text else "（サイトからの情報取得なし）"}
+
+【Web検索による補足情報（業界動向・ニュース等）】
+{research_web_summary if research_web_summary else "（補足情報なし。業界一般知識から補ってください）"}
+
+{reference_section}
 
 【出力要件】
 {roi_instruction}
 {case_instruction}
+- challenges と approaches は必ず related_challenge / title の対応関係が一致すること
+- anticipated_qa は3〜4件、経営者目線で厳しめの質問を想定すること
 
 以下のJSON形式のみで出力してください（マークダウンコードブロック不要）：
 {_OUTPUT_SCHEMA}"""
 
     response = client.messages.create(
         model="claude-opus-4-6",
-        max_tokens=5000,
+        max_tokens=6000,
         thinking={"type": "adaptive"},
         system=_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_prompt}],
@@ -147,11 +171,9 @@ def generate_proposal(
 
 def _parse_proposal_json(raw: str, company_name: str) -> dict:
     """Try to extract a JSON object from *raw*, returning a fallback on failure."""
-    # Strip markdown fences if present
     cleaned = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE).strip()
     cleaned = re.sub(r"\s*```$", "", cleaned).strip()
 
-    # Find the first { ... } block
     match = re.search(r"\{.*\}", cleaned, re.DOTALL)
     if match:
         try:
@@ -159,7 +181,6 @@ def _parse_proposal_json(raw: str, company_name: str) -> dict:
         except json.JSONDecodeError:
             pass
 
-    # Last resort: try to parse the whole string
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
@@ -167,31 +188,45 @@ def _parse_proposal_json(raw: str, company_name: str) -> dict:
 
     # Fallback skeleton so the app never crashes
     return {
-        "target_department": "AI推進本部・データサイエンス部門",
-        "target_persona": "AIプロジェクトリーダー",
-        "company_overview": f"{company_name}のAI活用推進状況",
+        "company_overview": {
+            "summary": f"{company_name}の事業概要（自動収集情報からの生成に失敗したため簡易表示です）",
+            "business_domain": "—",
+            "scale": "—",
+            "recent_topics": "—",
+        },
+        "business_segments": [
+            {"name": "主要事業", "description": "収集情報から詳細を特定できませんでした"}
+        ],
         "challenges": [
-            "教師データ作成の品質・スピード・コストのバランスが取れていない",
-            "AI開発サイクルがデータ準備工程でボトルネックになっている",
-            "アノテーション作業の属人化・外注管理コストが増大している",
-        ],
-        "challenge_details": [
             {
-                "title": "教師データ作成の非効率",
-                "description": "手作業によるラベリングは時間・コストがかかり、品質のばらつきも大きい",
-                "business_impact": "AI開発サイクルの長期化、競合他社へのスピード負け",
+                "segment": "主要事業",
+                "title": "情報収集の再実行が必要です",
+                "description": "AIからの応答をJSONとして解析できませんでした。もう一度生成をお試しください。",
+                "evidence": raw[:500] if raw else "",
+                "business_impact": "—",
             }
         ],
-        "proposal_summary": "FASTLabelで教師データ作成を自動化・高品質化し、AI開発を加速する",
-        "proposal_details": [
+        "ai_landscape_summary": "—",
+        "approaches": [
             {
-                "service_name": "AIアシストアノテーション",
-                "value": "半自動ラベリングで作業工数を最大80%削減",
-                "differentiator": "国産プラットフォームによるセキュリティと日本語サポート",
-                "expected_effect": "アノテーション工数50%削減・品質95%以上達成",
+                "related_challenge": "情報収集の再実行が必要です",
+                "title": "—",
+                "description": "—",
+                "consulting_support": "—",
+                "expected_effect": "—",
             }
         ],
-        "roi_estimate": "月間1,000時間の工数削減、年間コスト3,000万円相当の削減効果を想定",
-        "case_study": raw if raw else "",
-        "next_steps": ["デモンストレーション実施（30分）", "POC設計・スコープ合意"],
+        "roadmap_phases": [
+            {
+                "phase": "Phase1 現状診断",
+                "duration": "1ヶ月程度",
+                "description": "詳細ヒアリングと課題整理",
+                "deliverables": "現状診断レポート",
+            }
+        ],
+        "roi_estimate": "—",
+        "case_study": "",
+        "anticipated_qa": [],
+        "next_steps": ["再生成を実行", "詳細ヒアリングの日程調整"],
+        "target_persona_notes": "—",
     }

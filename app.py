@@ -1,4 +1,8 @@
-"""FASTLabel 提案書作成ツール — Streamlit アプリ"""
+"""生成AI活用 提案書ジェネレーター — Streamlit アプリ
+
+潜在顧客のWebサイトURLを入力するだけで、その企業の事業内容・課題に即した
+生成AI活用のご提案書（PowerPoint）を自動生成します。
+"""
 
 import os
 
@@ -6,15 +10,15 @@ import streamlit as st
 
 from utils.pptx_creator import create_proposal_pptx
 from utils.proposal_generator import generate_proposal
-from utils.rag import list_document_files, load_fastlabel_documents
-from utils.web_search import search_company_info
+from utils.rag import list_document_files, load_reference_documents
+from utils.web_search import CompanyResearchError, research_company_from_url
 
 # ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="FASTLabel 提案書作成ツール",
-    page_icon="📊",
+    page_title="生成AI活用 提案書ジェネレーター",
+    page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -36,11 +40,6 @@ st.markdown(
 # Sidebar — settings
 # ---------------------------------------------------------------------------
 with st.sidebar:
-    st.image(
-        "https://fastlabel.ai/favicon.ico",
-        width=32,
-    ) if False else None  # skip if no network; keep layout clean
-
     st.header("⚙️ 設定")
 
     api_key = st.text_input(
@@ -50,16 +49,24 @@ with st.sidebar:
         help="Anthropic API キーを入力してください（ANTHROPIC_API_KEY 環境変数でも設定可）",
     )
 
-    # Docker mount path takes priority; fall back to original Windows path
-    DOCKER_MOUNT = "/docs/fastlabel"
-    DEFAULT_FOLDER = (
-        DOCKER_MOUNT if os.path.exists(DOCKER_MOUNT)
-        else r"C:\Users\oisok\OneDrive\Desktop\Fastlabel"
+    st.divider()
+    st.subheader("🏢 提案元（自社）情報")
+    firm_name = st.text_input(
+        "会社名（任意）",
+        placeholder="例：〇〇コンサルティング株式会社",
+        help="提案書の表紙・フッターに表示する自社名です。空欄でも生成できます。",
+    )
+
+    # Docker mount path takes priority; fall back to a local default.
+    DOCKER_MOUNT = "/docs/reference"
+    DEFAULT_FOLDER = os.environ.get(
+        "REFERENCE_DOCS_PATH",
+        DOCKER_MOUNT if os.path.exists(DOCKER_MOUNT) else "",
     )
     folder_path = st.text_input(
-        "FASTLabel 資料フォルダパス",
+        "自社サービス資料・支援実績フォルダパス（任意）",
         value=DEFAULT_FOLDER,
-        help="FASTLabel のサービス資料・事例が入ったフォルダのフルパスを入力してください",
+        help="自社のサービス資料・過去の支援実績が入ったフォルダのフルパスを入力してください",
     )
 
     st.divider()
@@ -87,33 +94,38 @@ with st.sidebar:
 
     st.divider()
     st.subheader("🎛️ 出力オプション")
-    include_roi = st.checkbox("ROI 試算スライドを含める", value=True)
-    include_cases = st.checkbox("導入事例スライドを含める", value=True)
+    include_roi = st.checkbox("投資規模・ROI試算スライドを含める", value=True)
+    include_case_study = st.checkbox("類似支援実績スライドを含める", value=True)
 
 # ---------------------------------------------------------------------------
 # Main area
 # ---------------------------------------------------------------------------
-st.title("📊 FASTLabel 提案書作成ツール")
+st.title("🤖 生成AI活用 提案書ジェネレーター")
 st.markdown(
-    "クライアント企業名を入力するだけで、**Web 検索 + 社内資料 RAG + Claude** による提案書を自動生成します。"
+    "潜在顧客の **WebサイトURL** を入力するだけで、**サイト調査 + Web検索 + Claude** による "
+    "企業固有の生成AI活用提案書を自動生成します。"
 )
 
 col_input, col_info = st.columns([3, 2])
 
 with col_input:
-    company_name = st.text_input(
-        "🏢 クライアント企業名",
-        placeholder="例：トヨタ自動車、ソフトバンク、楽天グループ …",
-        help="提案書を作成したいクライアント企業の正式名称を入力してください",
+    website_url = st.text_input(
+        "🌐 潜在顧客のWebサイトURL",
+        placeholder="例：https://www.example.co.jp",
+        help="コーポレートサイトのトップページURLを入力してください",
+    )
+    company_name_hint = st.text_input(
+        "🏢 企業名（任意）",
+        placeholder="正式名称が分かれば入力（未入力の場合はサイトから自動推定）",
     )
 
 with col_info:
     st.markdown(
         """
         #### 生成フロー
-        1. 🔍 **Web 検索** — 企業の課題・事業概況を調査
-        2. 📚 **RAG** — FASTLabel 社内資料を参照
-        3. 🤖 **Claude 検討** — 課題仮説と提案内容を生成
+        1. 🌐 **サイト調査** — 会社概要・事業内容ページ等を収集
+        2. 🔍 **Web検索** — 業界動向・ニュースで補完
+        3. 🤖 **Claude 検討** — 課題仮説とアプローチ案を生成
         4. 📊 **PowerPoint** — 提案書スライドを出力
         """
     )
@@ -121,7 +133,7 @@ with col_info:
 generate_btn = st.button(
     "🚀 提案書を生成する",
     type="primary",
-    disabled=not bool(company_name),
+    disabled=not bool(website_url.strip()),
 )
 
 # ---------------------------------------------------------------------------
@@ -132,21 +144,19 @@ if generate_btn:
         st.error("⚠️ Anthropic API Key が設定されていません。サイドバーで入力するか、環境変数 ANTHROPIC_API_KEY を設定してください。")
         st.stop()
 
-    if not company_name.strip():
-        st.error("企業名を入力してください。")
+    if not website_url.strip():
+        st.error("潜在顧客のWebサイトURLを入力してください。")
         st.stop()
 
-    company_name = company_name.strip()
     progress = st.progress(0, text="準備中…")
     status = st.empty()
 
     try:
-        # --- Step 1: Load RAG documents ---
-        status.info("📚 FASTLabel 社内資料を読み込んでいます…")
-        progress.progress(10, text="社内資料を読み込み中…")
-        fastlabel_context = load_fastlabel_documents(folder_path)
+        # --- Step 1: Load reference documents (own firm materials) ---
+        status.info("📚 自社の資料を読み込んでいます…")
+        progress.progress(10, text="自社資料を読み込み中…")
+        reference_context = load_reference_documents(folder_path)
 
-        # Also ingest any directly uploaded files
         if uploaded_files:
             import tempfile, pathlib
             extra_parts: list[str] = []
@@ -161,35 +171,43 @@ if generate_btn:
                     extra_parts.append(f"=== {uf.name} ===\n{text.strip()}")
                 tmp_path.unlink(missing_ok=True)
             if extra_parts:
-                fastlabel_context = (
-                    (fastlabel_context + "\n\n" if fastlabel_context else "")
+                reference_context = (
+                    (reference_context + "\n\n" if reference_context else "")
                     + "\n\n".join(extra_parts)
                 )
 
-        if fastlabel_context:
-            st.caption(f"✅ 資料読み込み完了（{len(fastlabel_context):,} 文字）")
+        if reference_context:
+            st.caption(f"✅ 自社資料読み込み完了（{len(reference_context):,} 文字）")
 
-        # --- Step 2: Web search ---
-        status.info(f"🔍 {company_name} の情報を Web 検索しています…（数十秒かかる場合があります）")
-        progress.progress(25, text="Web 検索中…")
-        company_info = search_company_info(company_name, api_key)
+        # --- Step 2: Research the prospect's website ---
+        status.info(f"🌐 {website_url} を調査しています…（数十秒かかる場合があります）")
+        progress.progress(25, text="サイト調査中…")
+        research = research_company_from_url(website_url, api_key, company_name_hint.strip())
+        company_name = research.company_name
+
+        status.info(f"🔍 {company_name} の業界動向・ニュースをWeb検索しています…")
+        progress.progress(45, text="Web検索中…")
 
         # --- Step 3: Generate proposal ---
         status.info("✍️ 提案書の内容を Claude で生成しています…（1〜2 分かかる場合があります）")
-        progress.progress(55, text="提案内容を生成中…")
+        progress.progress(60, text="提案内容を生成中…")
         proposal = generate_proposal(
             company_name=company_name,
-            company_info=company_info,
-            fastlabel_context=fastlabel_context,
+            research_site_text=research.site_text,
+            research_web_summary=research.web_search_summary,
+            reference_context=reference_context,
             api_key=api_key,
-            include_cases=include_cases,
+            firm_name=firm_name.strip(),
             include_roi=include_roi,
+            include_case_study=include_case_study,
         )
 
         # --- Step 4: Build PowerPoint ---
         status.info("📊 PowerPoint スライドを作成しています…")
         progress.progress(85, text="PowerPoint を作成中…")
-        pptx_bytes = create_proposal_pptx(proposal, company_name)
+        pptx_bytes = create_proposal_pptx(
+            proposal, company_name, firm_name.strip(), sources=research.sources
+        )
 
         progress.progress(100, text="完了！")
         status.success(f"✅ **{company_name}** 様向け提案書の生成が完了しました！")
@@ -203,41 +221,65 @@ if generate_btn:
         summary_col, dl_col = st.columns([3, 1])
 
         with summary_col:
-            dept = proposal.get("target_department", "—")
-            persona = proposal.get("target_persona", "—")
-            st.markdown(f"**想定部門:** {dept}　｜　**キーパーソン:** {persona}")
+            overview = proposal.get("company_overview", {}) or {}
+            if overview.get("summary"):
+                st.markdown(f"**企業概要:** {overview['summary']}")
+            domain_scale = "　｜　".join(
+                filter(None, [overview.get("business_domain", ""), overview.get("scale", "")])
+            )
+            if domain_scale:
+                st.caption(domain_scale)
+
+            segments = proposal.get("business_segments", [])
+            if segments:
+                st.markdown("**主要事業:**")
+                for seg in segments:
+                    st.markdown(f"- **{seg.get('name', '')}** — {seg.get('description', '')}")
 
             challenges = proposal.get("challenges", [])
             if challenges:
                 st.markdown("**課題仮説:**")
                 for c in challenges:
-                    st.markdown(f"- {c}")
+                    st.markdown(f"- **[{c.get('segment', '')}] {c.get('title', '')}** — {c.get('description', '')}")
 
-            summary = proposal.get("proposal_summary", "")
-            if summary:
-                st.info(f"💡 **提案概要:** {summary}")
-
-            details: list[dict] = proposal.get("proposal_details", [])
-            if details:
-                with st.expander("提案内容 詳細を見る"):
-                    for d in details:
+            approaches = proposal.get("approaches", [])
+            if approaches:
+                with st.expander("生成AI活用アプローチ案 詳細を見る"):
+                    for a in approaches:
                         st.markdown(
-                            f"**{d.get('service_name', '')}**  \n"
-                            f"{d.get('value', '')}  \n"
-                            f"*差別化: {d.get('differentiator', '')}*  \n"
-                            f"期待効果: {d.get('expected_effect', '')}"
+                            f"**{a.get('title', '')}**（対応課題: {a.get('related_challenge', '')}）  \n"
+                            f"{a.get('description', '')}  \n"
+                            f"*支援内容: {a.get('consulting_support', '')}*  \n"
+                            f"期待効果: {a.get('expected_effect', '')}"
                         )
                         st.divider()
 
+            phases = proposal.get("roadmap_phases", [])
+            if phases:
+                with st.expander("導入・計画の進め方"):
+                    for p in phases:
+                        st.markdown(
+                            f"**{p.get('phase', '')}**（{p.get('duration', '')}） — "
+                            f"{p.get('description', '')}  \n"
+                            f"成果物: {p.get('deliverables', '')}"
+                        )
+
             roi = proposal.get("roi_estimate", "")
             if roi and include_roi:
-                with st.expander("ROI 試算"):
+                with st.expander("想定投資規模・ROI試算"):
                     st.write(roi)
 
             case = proposal.get("case_study", "")
-            if case and include_cases:
-                with st.expander("導入事例"):
+            if case and include_case_study:
+                with st.expander("類似支援実績"):
                     st.write(case)
+
+            qa_list = proposal.get("anticipated_qa", [])
+            if qa_list:
+                with st.expander("想定される論点・Q&A"):
+                    for qa in qa_list:
+                        st.markdown(f"**Q. {qa.get('question', '')}**  \nA. {qa.get('answer', '')}")
+                        st.divider()
 
             next_steps = proposal.get("next_steps", [])
             if next_steps:
@@ -249,16 +291,22 @@ if generate_btn:
             st.download_button(
                 label="📥 提案書をダウンロード\n（PowerPoint）",
                 data=pptx_bytes,
-                file_name=f"FASTLabel_提案書_{company_name}.pptx",
+                file_name=f"生成AI活用提案書_{company_name}.pptx",
                 mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
                 type="primary",
             )
 
-        # Show web search result
-        if company_info:
-            with st.expander("🔍 Web 検索結果（参考情報）"):
-                st.write(company_info)
+        if research.sources:
+            with st.expander("🌐 調査した情報源"):
+                for src in research.sources:
+                    st.write(src)
+        if research.web_search_summary:
+            with st.expander("🔍 Web検索結果（参考情報）"):
+                st.write(research.web_search_summary)
 
+    except CompanyResearchError as exc:
+        progress.empty()
+        status.error(f"❌ {exc}")
     except Exception as exc:
         progress.empty()
         status.error(f"❌ エラーが発生しました: {exc}")
