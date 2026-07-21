@@ -9,7 +9,7 @@ import os
 import streamlit as st
 
 from utils.pptx_creator import create_proposal_pptx
-from utils.proposal_generator import generate_proposal
+from utils.proposal_generator import ProposalGenerationError, generate_proposal
 from utils.rag import list_document_files, load_reference_documents
 from utils.web_search import CompanyResearchError, research_company_from_url
 
@@ -305,6 +305,9 @@ if generate_btn:
                 st.write(research.web_search_summary)
 
     except CompanyResearchError as exc:
+        progress.empty()
+        status.error(f"❌ {exc}")
+    except ProposalGenerationError as exc:
         progress.empty()
         status.error(f"❌ {exc}")
     except Exception as exc:

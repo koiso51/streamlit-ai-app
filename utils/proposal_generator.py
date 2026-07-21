@@ -11,6 +11,11 @@ import re
 
 import anthropic
 
+
+class ProposalGenerationError(Exception):
+    """Raised when Claude's proposal response could not be produced or parsed."""
+
+
 # ---------------------------------------------------------------------------
 # System prompt — generic generative-AI strategy consultant persona
 # ---------------------------------------------------------------------------
@@ -26,7 +31,8 @@ _SYSTEM_PROMPT = """あなたは経営コンサルティングファームに所
 3. 各課題仮説には、根拠となった具体的な事実（evidence）を明記すること。事実が乏しい場合でも、業界動向等の合理的な推測であることが分かる書き方にする。
 4. 提案する生成AIアプローチは、課題仮説と1対1で明確に対応させ、かつコンサルティングファームとして実際に提供可能な支援内容（現状診断、PoC設計・伴走、内製化支援、人材育成など）と結び付けること。
 5. 経営者が読んだときに「自社のことを事前に深く調べている」と感じられるよう、固有名詞（事業拠点・製品名・サービス名・直近のニュースなど）を積極的に本文に盛り込むこと。
-6. 出力は一般的な生成AI活用資料ではなく、初回の経営会議・役員ディスカッションで通用する品質であること。想定される反論・質問（コスト、セキュリティ、既存業務への影響など）にも備えること。"""
+6. 出力は一般的な生成AI活用資料ではなく、初回の経営会議・役員ディスカッションで通用する品質であること。想定される反論・質問（コスト、セキュリティ、既存業務への影響など）にも備えること。
+7. 収集できた情報が乏しい場合でも、それを理由に説明文やお詫び・確認の質問を返してはならない。情報が不足している項目は、フィールドの値として「収集情報からは確認できませんでした。業界一般的な傾向から次のように推測されます：〜」のように記述し、必ず指定されたJSON構造を最後まで維持すること。"""
 
 # ---------------------------------------------------------------------------
 # Output schema description (few-shot style JSON)
@@ -143,12 +149,18 @@ def generate_proposal(
 - challenges と approaches は必ず related_challenge / title の対応関係が一致すること
 - anticipated_qa は3〜4件、経営者目線で厳しめの質問を想定すること
 
-以下のJSON形式のみで出力してください（マークダウンコードブロック不要）：
+出力は下記のJSONオブジェクトのみとしてください。マークダウンのコードブロック（```）、前置きの挨拶、お詫び、確認の質問など、JSON以外の文字は一切含めないでください。出力の最初の文字は必ず「{{」、最後の文字は必ず「}}」にしてください：
 {_OUTPUT_SCHEMA}"""
 
+    # NOTE: max_tokens must cover both the "adaptive" thinking budget and the
+    # (fairly large) JSON output — this schema has many nested list fields
+    # (business_segments, challenges, approaches, roadmap_phases,
+    # anticipated_qa), and thinking tokens are deducted from the same
+    # budget. A budget that's too small silently truncates the JSON output
+    # mid-object, which then fails to parse below.
     response = client.messages.create(
         model="claude-opus-4-6",
-        max_tokens=6000,
+        max_tokens=16000,
         thinking={"type": "adaptive"},
         system=_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_prompt}],
@@ -162,6 +174,13 @@ def generate_proposal(
 
     raw = "\n".join(text_parts).strip()
 
+    if response.stop_reason == "max_tokens":
+        raise ProposalGenerationError(
+            "AIの応答が長さ制限に達し、提案書の生成が途中で打ち切られました。"
+            "もう一度お試しください。繰り返し発生する場合は、自社資料の量を減らすか、"
+            "サポートまでご連絡ください。"
+        )
+
     return _parse_proposal_json(raw, company_name)
 
 
@@ -170,7 +189,13 @@ def generate_proposal(
 # ---------------------------------------------------------------------------
 
 def _parse_proposal_json(raw: str, company_name: str) -> dict:
-    """Try to extract a JSON object from *raw*, returning a fallback on failure."""
+    """Extract a JSON object from *raw*.
+
+    Raises ``ProposalGenerationError`` (rather than silently returning
+    placeholder content) if the model's response cannot be parsed, so the
+    caller can surface the real failure instead of shipping a deck full of
+    generic filler text under the guise of a successful generation.
+    """
     cleaned = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE).strip()
     cleaned = re.sub(r"\s*```$", "", cleaned).strip()
 
@@ -186,47 +211,9 @@ def _parse_proposal_json(raw: str, company_name: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    # Fallback skeleton so the app never crashes
-    return {
-        "company_overview": {
-            "summary": f"{company_name}の事業概要（自動収集情報からの生成に失敗したため簡易表示です）",
-            "business_domain": "—",
-            "scale": "—",
-            "recent_topics": "—",
-        },
-        "business_segments": [
-            {"name": "主要事業", "description": "収集情報から詳細を特定できませんでした"}
-        ],
-        "challenges": [
-            {
-                "segment": "主要事業",
-                "title": "情報収集の再実行が必要です",
-                "description": "AIからの応答をJSONとして解析できませんでした。もう一度生成をお試しください。",
-                "evidence": raw[:500] if raw else "",
-                "business_impact": "—",
-            }
-        ],
-        "ai_landscape_summary": "—",
-        "approaches": [
-            {
-                "related_challenge": "情報収集の再実行が必要です",
-                "title": "—",
-                "description": "—",
-                "consulting_support": "—",
-                "expected_effect": "—",
-            }
-        ],
-        "roadmap_phases": [
-            {
-                "phase": "Phase1 現状診断",
-                "duration": "1ヶ月程度",
-                "description": "詳細ヒアリングと課題整理",
-                "deliverables": "現状診断レポート",
-            }
-        ],
-        "roi_estimate": "—",
-        "case_study": "",
-        "anticipated_qa": [],
-        "next_steps": ["再生成を実行", "詳細ヒアリングの日程調整"],
-        "target_persona_notes": "—",
-    }
+    snippet = raw[:400].strip() if raw else "(AIから空の応答が返されました)"
+    raise ProposalGenerationError(
+        f"AIの応答をJSON形式として解析できず、{company_name}様向け提案書の生成に失敗しました。"
+        "もう一度お試しください。\n\n"
+        f"--- AI応答の冒頭（デバッグ用）---\n{snippet}"
+    )
