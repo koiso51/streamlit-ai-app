@@ -22,6 +22,10 @@ _USER_AGENT = (
 _REQUEST_TIMEOUT = 10
 _MAX_PAGES = 5
 _MAX_CHARS_PER_PAGE = 6000
+# Below this many characters of visible body text, a page is considered
+# "thin" (typical of JS-rendered SPAs where content loads client-side) and
+# we fall back to whatever meta description is available server-side.
+_THIN_TEXT_THRESHOLD = 120
 
 # Keywords (Japanese + English) used to identify high-value internal pages
 # such as "company overview", "business", "news/IR", "recruiting".
@@ -71,7 +75,7 @@ def research_company_from_url(
         ) from exc
 
     pages: list[tuple[str, str, str]] = [
-        (normalized_url, home_title, _extract_visible_text(home_html))
+        (normalized_url, home_title, _collect_page_content(home_html))
     ]
     sources = [normalized_url]
 
@@ -82,7 +86,7 @@ def research_company_from_url(
             html, title = _fetch_page(link_url)
         except Exception:  # noqa: BLE001
             continue  # skip unreachable sub-pages, don't abort the whole research
-        pages.append((link_url, title or label, _extract_visible_text(html)))
+        pages.append((link_url, title or label, _collect_page_content(html)))
         sources.append(link_url)
 
     site_text_parts: list[str] = []
@@ -142,6 +146,40 @@ def _extract_visible_text(html: str) -> str:
     lines = [line.strip() for line in text.splitlines()]
     lines = [line for line in lines if line]
     return "\n".join(lines)
+
+
+def _extract_meta_description(html: str) -> str:
+    """Return the page's meta/OGP description, if any.
+
+    Many corporate sites are built as JavaScript SPAs where the rendered
+    body is nearly empty when fetched without a browser, but the
+    server-rendered <meta> description/OGP tags (used for search engines
+    and social sharing) are still present and often summarize the page.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    for attrs in (
+        {"name": "description"},
+        {"property": "og:description"},
+        {"name": "twitter:description"},
+    ):
+        tag = soup.find("meta", attrs=attrs)
+        content = tag.get("content", "").strip() if tag else ""
+        if content:
+            return content
+    return ""
+
+
+def _collect_page_content(html: str) -> str:
+    """Return the best-effort text content for a fetched page.
+
+    Falls back to (or augments with) the meta description when the visible
+    body text is too thin to be useful — e.g. JS-rendered pages.
+    """
+    body_text = _extract_visible_text(html)
+    meta_desc = _extract_meta_description(html)
+    if meta_desc and len(body_text) < _THIN_TEXT_THRESHOLD:
+        return f"[メタ情報] {meta_desc}\n{body_text}".strip()
+    return body_text
 
 
 def _find_candidate_links(html: str, base_url: str) -> list[tuple[str, str]]:
