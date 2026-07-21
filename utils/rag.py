@@ -1,4 +1,5 @@
-"""RAG utility: loads and extracts text from FASTLabel documents."""
+"""RAG utility: loads and extracts text from the consulting firm's own
+reference documents (service materials, past engagement summaries, etc.)."""
 
 import os
 from pathlib import Path
@@ -7,7 +8,7 @@ SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".txt", ".md"}
 MAX_CONTEXT_CHARS = 60_000  # keep well within Claude's context window
 
 
-def load_fastlabel_documents(folder_path: str) -> str:
+def load_reference_documents(folder_path: str) -> str:
     """Return concatenated text extracted from all documents in *folder_path*."""
     if not folder_path or not os.path.exists(folder_path):
         return ""

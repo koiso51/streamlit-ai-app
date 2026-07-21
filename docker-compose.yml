@@ -1,18 +1,19 @@
 services:
-  fastlabel-proposal-tool:
+  ai-proposal-tool:
     build: .
-    image: fastlabel-proposal-tool:latest
-    container_name: fastlabel-proposal-tool
+    image: ai-proposal-tool:latest
+    container_name: ai-proposal-tool
     ports:
       - "8501:8501"
     environment:
       # Anthropic API key — set in .env or pass directly
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - REFERENCE_DOCS_PATH=/docs/reference
     volumes:
-      # Mount the FASTLabel document folder into the container.
-      # Left side  : path on your Windows PC (edit to match your folder)
+      # Mount your own reference-materials folder into the container.
+      # Left side  : path on your PC (edit to match your folder)
       # Right side : path inside the container (keep as-is; matches app default)
-      - ${FASTLABEL_DOCS_PATH:-C:/Users/oisok/OneDrive/Desktop/Fastlabel}:/docs/fastlabel:ro
+      - ${REFERENCE_DOCS_PATH:-./reference-docs}:/docs/reference:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
